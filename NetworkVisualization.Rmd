@@ -1,0 +1,883 @@
+---
+title: "R Notebook Network construction"
+output: html_notebook
+---
+
+
+```{r}
+
+
+
+library(gridExtra)
+library(magrittr)
+library(ggpubr)
+library(limma)
+library(ROCR)
+library(caret)
+library(ggcorrplot)
+library(jmuOutlier)
+library(mice)
+library(Rfast)
+
+library(WGCNA)
+options(stringsAsFactors = FALSE);
+
+
+
+
+workingDir = "C:/Users/cooli/Documents/School/Scriptie";
+setwd(workingDir);
+
+```
+
+```{r}
+lnames = load(file =  "transforms-data.RData");
+lnames
+
+lnames = load(file =  "spearman-data.RData");
+lnames
+
+
+```
+
+
+```{r}
+# Build correlation matrices using PEARSON correlation
+
+comp_p <- cor(x_comp, method="pearson")
+clr1_p <- cor(x_clr1, method="pearson")
+asinh_p <- cor(x_asinh, method="pearson")
+```
+
+
+```{r}
+
+
+similarity <- abs(clr1_p)
+
+
+softPower = 4;
+
+
+adjacency <- adjacency.fromSimilarity(similarity, power = 4)
+                         
+                         
+TOM = TOMsimilarity(adjacency, TOMType = "unsigned")
+
+dissTOM = 1 - TOM
+
+```
+
+
+```{r}
+
+
+```
+
+```{r}
+
+
+```
+
+
+```{r}
+
+# Call the hierarchical clustering function
+geneTree = hclust(as.dist(dissTOM), method = "average");
+# Plot the resulting clustering tree (dendrogram)
+sizeGrWindow(12,9)
+plot(geneTree, xlab="", sub="", main = "Gene clustering on TOM-based dissimilarity",
+labels = FALSE, hang = 0.04);
+
+```
+
+
+
+```{r}
+
+
+# We like large modules, so we set the minimum module size relatively high:
+minModuleSize = 10;
+# Module identification using dynamic tree cut:
+dynamicMods = cutreeDynamic(dendro = geneTree, distM = dissTOM,
+deepSplit = 2, pamRespectsDendro = FALSE,
+minClusterSize = minModuleSize);
+table(dynamicMods)
+
+
+```
+
+```{r}
+
+
+# Convert numeric lables into colors
+dynamicColors = labels2colors(dynamicMods)
+table(dynamicColors)
+# Plot the dendrogram and colors underneath
+sizeGrWindow(8,6)
+plotDendroAndColors(geneTree, dynamicColors, "Dynamic Tree Cut",
+dendroLabels = FALSE, hang = 0.03,
+addGuide = TRUE, guideHang = 0.05,
+main = "Gene dendrogram and module colors")
+
+
+```
+
+```{r}
+
+datExpr = x_clr1
+
+# Calculate eigengenes
+
+
+MEList = moduleEigengenes(datExpr, colors = dynamicColors)
+MEs = MEList$eigengenes
+# Calculate dissimilarity of module eigengenes
+MEDiss = 1-cor(MEs);
+# Cluster module eigengenes
+METree = hclust(as.dist(MEDiss), method = "average");
+# Plot the result
+sizeGrWindow(7, 6)
+plot(METree, main = "Clustering of module eigengenes",
+xlab = "", sub = "")
+
+MEDissThres = 0.25
+# Plot the cut line into the dendrogram
+abline(h=MEDissThres, col = "red")
+# Call an automatic merging function
+merge = mergeCloseModules(datExpr, dynamicColors, cutHeight = MEDissThres, verbose = 3)
+# The merged module colors
+mergedColors = merge$colors;
+# Eigengenes of the new merged modules:
+mergedMEs = merge$newMEs;
+sizeGrWindow(12, 9)
+#pdf(file = "Plots/geneDendro-3.pdf", wi = 9, he = 6)
+plotDendroAndColors(geneTree, cbind(dynamicColors, mergedColors),
+c("Dynamic Tree Cut", "Merged dynamic"),
+dendroLabels = FALSE, hang = 0.03,
+addGuide = TRUE, guideHang = 0.05)
+
+
+```
+
+```{r}
+
+
+# Rename to moduleColors
+moduleColors = mergedColors
+# Construct numerical labels corresponding to the colors
+colorOrder = c("grey", standardColors(50));
+moduleLabels = match(moduleColors, colorOrder)-1;
+MEs = mergedMEs;
+# Save module colors and labels for use in subsequent parts
+#save(MEs, moduleLabels, moduleColors, geneTree, file = "clr1-pearson-networkConstruction-stepByStep.RData")
+
+
+```
+
+
+```{r}
+library(igraph)
+
+```
+
+
+```{r}
+library(igraph)
+net <- graph_from_adjacency_matrix(TOM, mode = "undirected", weighted = TRUE, diag=F)
+
+# Calculate network density:
+sum(E(net)$weight/(gsize(net)))
+
+
+```
+
+```{r}
+plot(net, edge.arrow.size=.1, edge.curved=.1,vertex.label	= "")
+
+
+```
+
+```{r}
+
+net <- set_vertex_attr(net, "color", value = moduleColors)
+
+```
+
+
+
+```{r}
+
+plot(net, vertex.label = "")
+```
+
+
+
+```{r}
+#######################################################################
+# Select brown module, visualize network using Igraph
+#######################################################################
+
+module="brown"
+
+probes = colnames(datExpr)
+
+
+inModule = is.finite(match(moduleColors, module));
+modProbes= probes[inModule]
+modTOM = TOM[inModule,inModule]
+
+dimnames(modTOM) = list(modProbes, modProbes)
+
+net <- graph_from_adjacency_matrix(modTOM, mode = "undirected", weighted = TRUE, diag=F)
+sum(E(net)$weight/(gsize(net)))
+
+plot(net)
+
+```
+
+
+```{r}
+########################################
+# add edge width = edge weight
+# node size = summed edge weights
+#######################################
+
+V(net)$strength <- strength(net, mode="all")
+plot(net,
+     vertex.label = "", 
+     vertex.size = V(net)$strength * 30)
+
+
+
+
+```
+
+```{r}
+trimmed <- delete.edges(net, which(E(net)$weight <0.05))
+
+plot(trimmed, vertex.color="brown",
+     vertex.size = V(trimmed)$strength * 10)
+
+
+
+
+
+
+```
+
+
+
+```{r}
+
+l <- layout_with_fr(net)
+plot(net, layout=l)
+
+plot(net, 
+     vertex.size = V(net)$strength * 20,
+     edge.width= (edge_attr(net)$weight * 20)^2,
+     layout = l)
+
+
+plot(net, 
+     vertex.size = V(net)$strength * 20,
+     edge.width= (edge_attr(trimmed)$weight * 20)^1.3,
+     layout = l)
+
+
+
+
+
+```
+
+```{r}
+
+
+
+```
+
+
+```{r}
+
+V(net)$eigenvector <- evcent(net)$vector
+
+
+
+
+plot(net,
+     main="Brown module network.    Node size = eigenvvector centrality",
+     vertex.size = V(net)$eigenvector/max(V(net)$eigenvector) * 30)
+
+
+
+
+plot(trimmed,
+     main="Brown module network.    Node size = eigenvvector centrality",
+     vertex.size = V(net)$eigenvector/max(V(net)$eigenvector) * 30)
+```
+
+
+
+
+```{r}
+#######################################################################
+# Select BLUE module, visualize network using Igraph
+#######################################################################
+
+module="blue"
+
+probes = colnames(datExpr)
+
+
+inModule = is.finite(match(moduleColors, module));
+modProbes= probes[inModule]
+modTOM = TOM[inModule,inModule]
+
+dimnames(modTOM) = list(modProbes, modProbes)
+
+net <- graph_from_adjacency_matrix(modTOM, mode = "undirected", weighted = TRUE, diag=F)
+plot(net)
+
+```
+
+
+```{r}
+
+
+V(net)$strength <- strength(net, mode="all")
+trimmed <- delete.edges(net, which(E(net)$weight <0.10))
+
+plot(trimmed, vertex.color="brown",
+     vertex.size = V(trimmed)$strength * 10)
+
+
+
+plot(net,
+     vertex.label = "", 
+     vertex.size = V(trimmed)$strength * 5,
+     edge.width= (edge_attr(trimmed)$weight * 20)^1.3)
+
+
+
+
+V(net)$eigenvector <- evcent(net)$vector
+
+
+
+
+plot(trimmed,
+     main="Blue module network.  \n  Node size = eigenvvector centrality \n edges > 0.1 shown",
+     vertex.size = V(net)$eigenvector/max(V(net)$eigenvector) * 30,
+     edge.width=2)
+
+
+```
+
+```{r}
+colSums(modTOM)
+
+```
+
+
+```{r}
+#####################################################################
+# Exporting to CYtoscape!!
+####################################################################
+module="blue"
+
+probes = colnames(datExpr)
+
+
+inModule = is.finite(match(moduleColors, module));
+modProbes= probes[inModule]
+modTOM = TOM[inModule,inModule]
+
+dimnames(modTOM) = list(modProbes, modProbes)
+
+
+
+cyt = exportNetworkToCytoscape(TOM,
+edgeFile = "clr1--1-edges.txt",
+nodeFile = "clr1--1-nodes.txt",
+weighted = TRUE,
+threshold = 0.02,
+nodeNames = probes,
+nodeAttr = moduleColors)
+
+
+```
+
+
+
+```{r}
+#####################################################################
+# Exporting to CYtoscape!!
+####################################################################
+module="blue"
+
+probes = colnames(datExpr)
+
+
+inModule = is.finite(match(moduleColors, module));
+modProbes= probes[inModule]
+modTOM = TOM[inModule,inModule]
+
+dimnames(modTOM) = list(modProbes, modProbes)
+
+
+
+cyt = exportNetworkToCytoscape(TOM,
+edgeFile = "clr1--1-edges.txt",
+nodeFile = "clr1--1-nodes.txt",
+weighted = TRUE,
+threshold = 0.02,
+nodeNames = probes,
+nodeAttr = moduleColors)
+
+
+
+
+```
+
+
+
+
+
+```{r}
+library(RCy3)
+net <- graph_from_adjacency_matrix(adjacency, mode = "undirected", weighted = TRUE, diag=F)
+net <- set_vertex_attr(net, "color", value = moduleColors)
+
+
+V(net)$module <- moduleColors
+createNetworkFromIgraph(net,"myIgraph")
+
+```
+
+
+```{r}
+net <- graph_from_adjacency_matrix(modTOM, mode = "undirected", weighted = TRUE, diag=F)
+net <- set_vertex_attr(net, "color", value = moduleColors)
+
+
+createNetworkFromIgraph(net,"TOM-blue")
+
+```
+
+```{r}
+
+
+```
+```{r}
+
+evcent(net)$vector
+
+```
+
+```{r}
+
+
+```
+
+
+
+
+
+
+
+
+```{r}
+E(net)$width <- E(net)$weight/6
+
+plot(net, vertex.label = "")
+
+```
+
+```{r}
+graph_attr(net, "layout") <- layout_with_lgl
+plot(net, vertex.label = "") 
+
+```
+
+
+```{r}
+
+weightdeg <- strength(net, mode="all")
+V(net)$size <- weightdeg
+trimmed <- delete.edges(net, which(E(net)$weight <0.1))
+#trimmed <- delete.vertices(net, which(V(net)))
+
+```
+
+```{r}
+plot(trimmed, vertex.label = "")
+
+```
+
+```{r}
+weightdeg <- strength(net, mode="all")
+V(net)$size <- weightdeg * 2
+trimmed <- delete.edges(net, which(E(net)$weight >0.99))
+trimmed <- delete.edges(net, which(E(trimmed)$weight <0.1))
+
+trimmed <- delete.vertices(trimmed, which(V(net)$size < 10))
+
+plot(trimmed,  vertex.label = "")
+#trimmed <- delete.vertices(net, which(V(net)))
+
+
+
+
+```
+
+
+```{r}
+
+weightdeg <- strength(net, mode="all")
+V(net)$size <- weightdeg * 2
+trimmed <- delete.edges(net, which(E(net)$weight >0.99))
+trimmed <- delete.edges(net, which(E(trimmed)$weight <0.2))
+
+#trimmed <- delete.vertices(trimmed, which(V(net)$size < 10))
+
+plot(trimmed,  vertex.label = "")
+#trimmed <- delete.vertices(net, which(V(net)))
+
+
+
+
+```
+
+
+
+```{r}
+netTOM <- graph_from_adjacency_matrix(TOM, mode = "undirected", weighted = TRUE, diag=F)
+
+netTOM <- set_vertex_attr(netTOM, "color", value = moduleColors)
+
+
+
+plot(netTOM, vertex.label="", main="raw TOM graph", vertex.size = 5)
+
+weightdeg <- strength(net, mode="all")
+V(netTOM)$size <- weightdeg * 2
+#trimmed <- delete.edges(netTOM, which(E(netTOM)$weight >0.99))
+trimmed <- delete.edges(netTOM, which(E(trimmed)$weight <0.3))
+
+#trimmed <- delete.vertices(trimmed, which(V(net)$size < 10))
+
+plot(trimmed,  vertex.label = "", main = "TOM graph", sub = "edges > 0.2 shown")
+
+#trimmed <- delete.vertices(trimmed, which(V(net)$size < 10))
+
+#plot(trimmed,  vertex.label = "", main = "trimmed eges and nodes TOM graph")
+
+
+```
+
+
+
+```{r}
+netDissTOM <- graph_from_adjacency_matrix(dissTOM, mode = "undirected", weighted = TRUE, diag=F)
+
+netDissTOM <- set_vertex_attr(netDissTOM, "color", value = moduleColors)
+
+plot(netDissTOM,vertex.label="", main="raw dissimlarity TOM graph", sub="all edges shown")
+
+weightdeg <- strength(netDissTOM, mode="all")
+V(netDissTOM)$size <- weightdeg * 0.1
+trimmed <- delete.edges(netDissTOM, which(E(netDissTOM)$weight >0.99))
+trimmed <- delete.edges(trimmed, which(E(trimmed)$weight <0.5))
+
+#trimmed <- delete.vertices(trimmed, which(V(net)$size < 10))
+
+plot(trimmed,  vertex.label = "", main = "dissimilarity TOM graph", sub = "edges > 0.2 shown")
+
+trimmed <- delete.vertices(trimmed, which(V(net)$size < 6))
+
+plot(trimmed,  vertex.label = "", main = "trimmed eges and nodes TOM graph")
+
+
+
+```
+
+```{r}
+evcent(netTOM)$vector
+
+```
+
+```{r}
+#Eigenvector centrality plots
+
+
+
+V(netTOM)$eigenvector <- evcent(netTOM)$vector
+plot(netTOM,
+     vertex.label = "", 
+     vertex.size = V(netTOM)$eigenvector/max(V(netTOM)$eigenvector) * 30)
+
+
+net <- graph_from_adjacency_matrix(adjacency, mode = "undirected", weighted = TRUE, diag=F)
+
+net <- set_vertex_attr(net, "color", value = moduleColors)
+
+
+V(net)$eigenvector <- evcent(net)$vector
+plot(net,
+     vertex.label = "", 
+     main="Adjacency matrix based graph",
+     sub="node size = eigenvector centrality",
+     vertex.size = V(net)$eigenvector/max(V(net)$eigenvector) * 30)
+
+```
+
+
+```{r}
+betweenness(net, directed = FALSE)
+
+```
+
+```{r}
+
+
+```
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+```{r}
+
+
+```
+
+```{r}
+#######################################################################
+# Select brown module, visualize network using Igraph
+#######################################################################
+
+module="turquoise"
+
+probes = colnames(datExpr)
+
+
+inModule = is.finite(match(moduleColors, module));
+modProbes= probes[inModule]
+modTOM = TOM[inModule,inModule]
+
+dimnames(modTOM) = list(modProbes, modProbes)
+
+brownNet <- graph_from_adjacency_matrix(modTOM, mode = "undirected", weighted = TRUE, diag=F)
+sum(E(brownNet)$weight/(gsize(brownNet)))
+
+```
+
+
+```{r}
+#######################################################################
+# Select brown module, visualize network using Igraph
+#######################################################################
+
+module="grey"
+
+probes = colnames(datExpr)
+
+
+inModule = is.finite(match(moduleColors, module));
+modProbes= probes[inModule]
+modTOM = TOM[inModule,inModule]
+
+dimnames(modTOM) = list(modProbes, modProbes)
+
+brownNet <- graph_from_adjacency_matrix(modTOM, mode = "undirected", weighted = TRUE, diag=F)
+sum(E(brownNet)$weight/(gsize(brownNet)))
+table(inModule)
+
+```
+
+```{r}
+#######################################################################
+# Select brown module, visualize network using Igraph
+#######################################################################
+
+module="blue"
+
+probes = colnames(datExpr)
+
+
+inModule = is.finite(match(moduleColors, module));
+modProbes= probes[inModule]
+modTOM = TOM[inModule,inModule]
+
+dimnames(modTOM) = list(modProbes, modProbes)
+
+brownNet <- graph_from_adjacency_matrix(modTOM, mode = "undirected", weighted = TRUE, diag=F)
+sum(E(brownNet)$weight/(gsize(brownNet)))
+table(inModule)
+
+```
+
+```{r}
+#######################################################################
+# Select brown module, visualize network using Igraph
+#######################################################################
+
+module="brown"
+
+probes = colnames(datExpr)
+
+
+inModule = is.finite(match(moduleColors, module));
+modProbes= probes[inModule]
+modTOM = TOM[inModule,inModule]
+
+dimnames(modTOM) = list(modProbes, modProbes)
+
+brownNet <- graph_from_adjacency_matrix(modTOM, mode = "undirected", weighted = TRUE, diag=F)
+sum(E(brownNet)$weight/(gsize(brownNet)))
+table(inModule)
+
+```
+
+
+```{r}
+####### Relating modules to traits
+
+
+sample <- readRDS('sample_8000.RDS')
+
+
+# Define numbers of genes and samples
+nGenes = ncol(datExpr);
+nSamples = nrow(datExpr);
+# Recalculate MEs with color labels
+MEs0 = moduleEigengenes(datExpr, moduleColors)$eigengenes
+MEs = orderMEs(MEs0)
+moduleTraitCor = cor(MEs, datTraits, use = "p");
+moduleTraitPvalue = corPvalueStudent(moduleTraitCor, nSamples);
+
+
+
+
+
+
+```
+
+
+```{r}
+# IgA0 vs HC
+group <- which(sample$binary.0.1 == '0' | sample$binary.0.1 == 'HC')
+x <- dat[group, ]
+y <- sample$binary.0.1[group]
+y %<>% factor(levels = c("0","HC"), labels = c("Yes","No"))
+
+```
+
+```{r}
+
+
+```
+
+```{r}
+
+
+```
+
+
+```{r}
+
+
+```
+
+```{r}
+
+
+```
+
+```{r}
+
+
+```
+
+
+```{r}
+
+datExpr = x_clr1
+# Select module
+module = "brown";
+# Select module probes
+probes = names(datExpr)
+inModule = (moduleColors==module);
+modProbes = probes[inModule];
+# Select the corresponding Topological Overlap
+modTOM = TOM[inModule, inModule];
+dimnames(modTOM) = list(modProbes, modProbes)
+# Export the network into an edge list file VisANT can read
+vis = exportNetworkToVisANT(modTOM,
+file = paste("VisANTInput-", module, ".txt", sep=""),
+weighted = TRUE,
+threshold = 0,
+probeToGene = data.frame(annot$substanceBXH, annot$gene_symbol) )
+
+
+```
+
+
+
+```{r}
+#Calculate Cantralization
+
+strengths <- strength(net, mode="all")
+max(strengths)
+density = sum(E(net)$weight/(gsize(net)))
+
+nGenes = length(strengths)
+centralization = (nGenes/nGenes - 2) * ((max(strengths)/nGenes-1) - density)
+print(centralization)
+
+```
+
+```{r}
+myCentralization <- function(adjmatrix){
+        
+        
+        net <- graph_from_adjacency_matrix(adjmatrix, mode = "undirected", weighted = TRUE, diag=F)
+        
+        strengths <- strength(net, mode="all")
+        density = myDensity(adjmatrix)
+        
+        centralization = (nGenes/nGenes - 2) * ((max(strengths)/nGenes-1) - density)
+        
+        return(centralization)
+}
+```
+
+```{r}
+
+myDensity <- function(adjmatrix) {
+        
+        net <- graph_from_adjacency_matrix(adjmatrix, mode = "undirected", weighted = TRUE, diag=F)
+
+        nGenes = ncol(adjmatrix)
+        
+        totalWeigths = sum(E(net)$weight)
+        totalEdges = nGenes * (nGenes - 1)
+        
+        density = (totalWeights/totalEdges)/2
+        
+        return(density)
+}
+
+```
+
+```{r}
+
+myCentralization(TOM)
+```

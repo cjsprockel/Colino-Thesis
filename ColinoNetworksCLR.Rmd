@@ -1,0 +1,262 @@
+---
+title: "CLR Network Analysis"
+author: Colino Sprockel, Zhujie Gu
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+#From Zhujie
+
+library(gridExtra)
+library(magrittr)
+library(ggpubr)
+library(limma)
+library(ROCR)
+library(caret)
+library(ggcorrplot)
+library(jmuOutlier)
+library(mice)
+library(Rfast)
+
+library(WGCNA)
+options(stringsAsFactors = FALSE);
+
+
+myHeatmap_ad <- function(data, type='spearman', name=F) {
+  library(reshape2)
+  library(ggcorrplot)
+  cormat <- round(cor(data,method=type),3)
+  med <- as.character(median(as.vector(cormat)))
+  iqr <- as.character(IQR(as.vector(cormat)))
+  
+  cormat <- cormat[order(colSums(cormat)),order(colSums(cormat))]
+  
+  if(name){
+    p <- ggcorrplot(cormat, hc.order=F, type='upper',tl.cex = 5) +
+    annotate(geom="text",label=paste0("Median: ",med),x=0.8*dim(data)[2],y=10) +
+    annotate(geom="text",label=paste0("IQR: ",iqr),x=0.8*dim(data)[2],y=2)
+  }else{
+    p <- ggcorrplot(cormat, hc.order=F, type='upper',tl.cex = 5) + theme(axis.text = element_blank()) +
+    annotate(geom="text",label=paste0("Median: ",med),x=0.8*dim(data)[2],y=10) +
+    annotate(geom="text",label=paste0("IQR: ",iqr),x=0.8*dim(data)[2],y=2)
+  }
+  
+  
+
+ return(p)
+}
+
+
+```
+
+
+# Loading data
+```{r}
+workingDir = "C:/Users/cooli/Dropbox/Colino/MB_data2";
+setwd(workingDir);
+
+lnames = load(file =  "Transforms_Correlations_Full_Data.RData");
+lnames
+
+datExpr <- cor_clr1
+
+```
+
+
+```{r}
+#First check for genes and samples with too many missing values (which shouldn't turn up anything because of 
+# our transforms)
+gsg = goodSamplesGenes(datExpr0, verbose = 3);
+gsg$allOK
+
+
+# Next we check the samples to see if we can find any obvious outliers to remove
+
+sampleTree = hclust(dist(datExpr0), method = "average");
+# Plot the sample tree: Open a graphic output window of size 12 by 9 inches
+# The user should change the dimensions if the window is too large or too small.
+sizeGrWindow(12,9)
+#pdf(file = "Plots/sampleClustering.pdf", width = 12, height = 9);
+par(cex = 0.6);
+par(mar = c(0,4,2,0))
+plot(sampleTree, main = "Sample clustering to detect outliers", sub="", xlab="", cex.lab = 1.5,
+cex.axis = 1.5, cex.main = 2)
+
+
+
+
+
+#Run top part first, run code below to remove outliers, adjust abline and cutHeight to remove outliers if neccessary.
+################## Below is not necessary to run for now.
+
+# # Plot a line to show the cut
+# abline(h = 22, col = "red");
+# 
+# 
+# # Determine cluster under the line
+# clust = cutreeStatic(sampleTree, cutHeight = 22, minSize = 10)
+# print(table(clust))
+# 
+# # clust 1 contains the samples we want to keep.
+# keepSamples = (clust==1)
+# datExpr = datExpr0[keepSamples, ]
+# nGenes = ncol(datExpr)
+# nSamples = nrow(datExpr)
+
+
+
+```
+
+```{r}
+#Loading clinical trait data
+# Comparing sample clustering based on MB to Clinical data
+#Laterrr
+
+
+
+
+
+```
+
+
+```{r}
+
+
+# Choose a set of soft-thresholding powers
+powers = c(c(1:10), seq(from = 12, to=20, by=2))
+# Call the network topology analysis function
+sft = pickSoftThreshold(datExpr, powerVector = powers, verbose = 5)
+# Plot the results:
+sizeGrWindow(9, 5)
+par(mfrow = c(1,2));
+cex1 = 0.9;
+# Scale-free topology fit index as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
+main = paste("Scale independence"));
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+labels=powers,cex=cex1,col="red");
+# this line corresponds to using an R^2 cut-off of h
+abline(h=0.9,col="red")
+# Mean connectivity as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], sft$fitIndices[,5],
+xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
+main = paste("Mean connectivity"))
+text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
+
+
+### cor_clr1: Really high power necessary to approach scale free topology, also pretty bad.
+### We will use power = 14. further increasing the power barely improves the fit but reduces connectivity too much.
+
+### cor_clr2: This on is a lot better! at a power of 6 we already reach > 0.9 scale free fit.
+### We will use power = 6 
+
+
+
+```
+
+
+
+```{r}
+
+
+
+# I decided to lower minModuleSize 30 -> 10 and mergeCutHeight 0,25 -> 0,20 because we don't have 
+# thousands of genes and the height differences seem modest
+
+net = blockwiseModules(datExpr, power = 14,
+                       TOMType = "unsigned", minModuleSize = 6,
+                       reassignThreshold = 0, mergeCutHeight = 0.20,
+                       numericLabels = TRUE, pamRespectsDendro = FALSE,
+                       saveTOMs = TRUE,
+                       saveTOMFileBase = "CorClr1_TOM",
+                       verbose = 3)
+
+
+table(net$colors)
+# cor_clr1 only produces two (one actually, the 0 module is for genes that couldnt find a cluster)
+# modules, presumably one for all the modified zeros and one for the genes with higher
+# counts? Investigate later.
+#   0   1 
+#  31 133 
+
+# cor_clr2 provides three clusters and only 25 in the no cluster group at minModuleSize = 10, mergeCutHeight = 0,20
+
+# 0   1   2   3 
+# 25 113  14  12 
+
+# corc_clr4 provides four cluster, and puts 92 genes in the no cluster module, this might be a really good result
+# If the genes in 0 are the ones that are the zero-abundant genes?
+# 
+#  0  1  2  3  4 
+# 92 33 16 13 10 
+
+```
+
+```{r}
+
+# open a graphics window
+sizeGrWindow(12, 9)
+# Convert labels to colors for plotting
+mergedColors = labels2colors(net$colors)
+# Plot the dendrogram and the module colors underneath
+plotDendroAndColors(net$dendrograms[[1]], mergedColors[net$blockGenes[[1]]],
+"Module colors",
+dendroLabels = FALSE, hang = 0.03,
+addGuide = TRUE, guideHang = 0.05)
+
+
+
+
+
+```
+
+
+
+```{r}
+moduleLabels = net$colors
+moduleColors = labels2colors(net$colors)
+MEs = net$MEs;
+geneTree = net$dendrograms[[1]];
+save(MEs, moduleLabels, moduleColors, geneTree,
+file = "clr1-networkConstruction-auto.RData")
+```
+
+
+
+
+
+
+
+
+```{r}
+
+### Plan: 
+
+### 0.5) Add the other transforms to the data (file =  "Transforms_Correlations_Full_Data.RData")
+### 1) inspect different modules (correlation heatmap of singular modules, look at original count data of a module)
+### Do all zeros end up in the same modules??
+
+### 2) Compare overlapp of modules produces by different transforms
+
+### plot network of Module Eigengenes
+
+### Try out all of above on subsets of data (HC, CVID etc)
+### Test on simulated data???
+
+### laterrrr:
+### Correlate module eigengenes to clinical traits. Heatmap Eigengenes/Clinical Traits
+
+
+
+
+```
+
+
+
+
+

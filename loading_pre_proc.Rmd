@@ -1,0 +1,340 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r setup, include=FALSE}
+
+library(gridExtra)
+library(magrittr)
+library(ggpubr)
+library(limma)
+library(ROCR)
+library(caret)
+library(ggcorrplot)
+library(jmuOutlier)
+library(mice)
+library(Rfast)
+library(infotheo)
+
+myHeatmap_ad <- function(data, type='spearman', name=F) {
+  library(reshape2)
+  library(ggcorrplot)
+  cormat <- round(cor(data,method=type),3)
+  med <- as.character(median(as.vector(cormat)))
+  iqr <- as.character(IQR(as.vector(cormat)))
+  
+  cormat <- cormat[order(colSums(cormat)),order(colSums(cormat))]
+  
+  if(name){
+    p <- ggcorrplot(cormat, hc.order=F, type='upper',tl.cex = 5) +
+    annotate(geom="text",label=paste0("Median: ",med),x=0.8*dim(data)[2],y=10) +
+    annotate(geom="text",label=paste0("IQR: ",iqr),x=0.8*dim(data)[2],y=2)
+  }else{
+    p <- ggcorrplot(cormat, hc.order=F, type='upper',tl.cex = 5) + theme(axis.text = element_blank()) +
+    annotate(geom="text",label=paste0("Median: ",med),x=0.8*dim(data)[2],y=10) +
+    annotate(geom="text",label=paste0("IQR: ",iqr),x=0.8*dim(data)[2],y=2)
+  }
+  
+  
+
+ return(p)
+}
+
+
+```
+
+
+```{r}
+
+#Loading an cleaning data
+
+workingDir = "C:/Users/cooli/Documents/School/Scriptie";
+setwd(workingDir);
+
+dat <- readRDS('L6_8000.RDS')
+sample <- readRDS('sample_8000.RDS')
+###?dat_merge <- readRDS('merged_L6_8000.RDS')
+# dat <- readRDS('L6_8000.RDS')
+# sample <- readRDS('sample.RDS')
+# all.equal(rownames(dat), rownames(dat_HW))
+all.equal(rownames(dat), rownames(sample))
+# all.equal(dat, dat_HW[,1:170])
+###?rm(dat_merge)
+
+# replace troublesome symbols in colnames (these symbols will mess up in RF)
+colnames(dat) <- gsub(colnames(dat), pattern = "\\[|\\]", replacement = "")
+colnames(dat) <- gsub(colnames(dat), pattern = " ", replacement = "_")
+
+# Remove genes with all zeros, 6 genes will be removed.
+rrm0 <- which(apply(dat, 2, sd) == 0)
+x <- dat[,-rrm0]
+
+
+
+```
+
+
+
+```{r}
+
+# Transform data
+
+
+comp <- function(x) {
+  x <- apply(x,1,function(x) (x/sum(x)))
+  return(t(x))
+}
+x_comp <- comp(x)
+
+
+
+# clr1
+clr1 <- function(x){
+  x <- x + 1
+  x <- comp(x)
+  x <- log(x)
+  x <- x - rowMeans(x)
+  return(x)
+}
+x_clr1 <- clr1(x)
+
+# asinh
+x_asinh <- asinh(x)
+aa <- seq(0,1,by=0.001)
+bb <- asinh(aa)
+plot(aa,bb)
+
+
+
+```
+
+```{r}
+# Correlation matrices
+
+comp_spear <- cor(x_comp, method="spearman")
+clr1_spear <- cor(x_clr1, method="spearman")
+asinh_spear <- cor(x_asinh, method="spearman")
+
+comp_mut <- mutinformation(discretize(x_comp), method="emp")
+table(comp_mut>1)
+clr1_mut <- mutinformation(discretize(x_clr1), method="emp")
+table(clr1_mut>1)
+max(clr1_mut)
+asinh_mut <- mutinformation(discretize(x_asinh), method="emp")
+table(asinh_mut>1)
+
+# Correlation matrix contains values above 1, normalize to <0,1>
+comp_mut <- comp_mut/max(comp_mut)
+clr1_mut <- clr1_mut/max(clr1_mut)
+asinh_mut <- asinh_mut/max(asinh_mut)
+
+table(comp_mut>1)
+table(clr1_mut>1)
+table(asinh_mut>1)
+
+```
+
+```{r}
+
+workingDir = "C:/Users/cooli/Documents/School/Scriptie";
+setwd(workingDir);
+#save data for later use
+save(x_comp, x_clr1, x_asinh, file = "transforms-data.RData")
+save(comp_spear, clr1_spear, asinh_spear, file = "spearman-data.RData")
+save(comp_mut, clr1_mut, asinh_mut, file = "emp-data.RData")
+
+
+
+
+```
+
+```{r}
+
+
+
+
+```
+
+```{r}
+cor_p <- list()
+cor_p[[1]] <- myHeatmap_ad(comp_spear)
+cor_p[[2]] <- myHeatmap_ad(x_comp)
+cor_p[[3]] <- myHeatmap_ad(x_asinh)
+
+# grid.arrange(arrangeGrob(cor_p[[1]], top = "comp_spear"),
+#              arrangeGrob(cor_p[[2]], top = "x_comp"),
+#              arrangeGrob(cor_p[[3]], top = "asinh"))
+cor_p[[2]]
+cor_p[[1]]
+```
+
+
+```{r}
+
+###########################################
+# Create a dataframe "filtered" that has all bacteria removed with a mean count of less than 10
+##########################################
+
+
+workingDir = "C:/Users/cooli/Documents/School/Scriptie";
+setwd(workingDir);
+
+dat <- readRDS('L6_8000.RDS')
+
+mean(colMeans(dat))
+
+
+goodbacteria <- colMeans(dat)>10
+table(goodgenes)
+filtered <- dat[goodbacteria]
+bad <- dat[!goodbacteria]
+mean(colMeans(filtered))
+mean(colMeans(bad))
+
+```
+
+
+```{r}
+
+# clr1
+clr1 <- function(x){
+  x <- x + 1
+  x <- comp(x)
+  x <- log(x)
+  x <- x - rowMeans(x)
+  return(x)
+}
+filtered_clr1 <- clr1(filtered)
+
+filtered_clr1_spear <- cor(filtered_clr1, method="spearman")
+filtered_clr1_pearson <- cor(filtered_clr1, method="pearson")
+
+
+
+```
+
+
+
+
+
+```{r}
+
+
+
+
+sim_matrix <- abs(filtered_clr1_pearson)
+
+
+powers = c(c(1:10), seq(from = 12, to=20, by=2))
+sft = pickSoftThreshold.fromSimilarity(sim_matrix, powerVector = powers, verbose = 5)
+
+
+# Plot the results:
+sizeGrWindow(9, 5)
+par(mfrow = c(1,2));
+cex1 = 0.9;
+# Scale-free topology fit index as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
+     main = paste("Scale independence"));
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     labels=powers,cex=cex1,col="red");
+# this line corresponds to using an R^2 cut-off of h
+abline(h=0.9,col="red")
+# Mean connectivity as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], sft$fitIndices[,5],
+     xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
+     main = paste("Mean connectivity"))
+text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
+```
+
+
+```{r}
+
+
+
+
+sim_matrix <- abs(filtered_clr1_pearson)
+
+
+powers = c(c(1:10), seq(from = 12, to=20, by=2))
+sft = pickSoftThreshold.fromSimilarity(sim_matrix, powerVector = powers, verbose = 5)
+
+
+# Plot the results:
+sizeGrWindow(9, 5)
+par(mfrow = c(1,2));
+cex1 = 0.9;
+# Scale-free topology fit index as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
+     main = paste("Scale independence"));
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     labels=powers,cex=cex1,col="red");
+# this line corresponds to using an R^2 cut-off of h
+abline(h=0.9,col="red")
+# Mean connectivity as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], sft$fitIndices[,5],
+     xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
+     main = paste("Mean connectivity"))
+text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
+```
+
+
+```{r}
+library(SpiecEasi)
+
+
+sparccmatrix <- sparcc(filtered, iter = 20, inner_iter = 10, th = 0.1)
+sparccmax = max(sparccmatrix[[1]])
+
+filtered_sparcc <- sparccmatrix[[1]]
+
+#normalizing the sparcc matrix
+diag(filtered_sparcc) <- 1
+filtered_sparcc <- filtered_sparcc/max(filtered_sparcc)
+diag(filtered_sparcc) <- 1
+
+
+```
+
+
+
+
+
+```{r}
+
+
+
+
+sim_matrix <- abs(filtered_sparcc)
+
+
+powers = c(c(1:10), seq(from = 12, to=20, by=2))
+sft = pickSoftThreshold.fromSimilarity(sim_matrix, powerVector = powers, verbose = 5)
+
+
+# Plot the results:
+sizeGrWindow(9, 5)
+par(mfrow = c(1,2));
+cex1 = 0.9;
+# Scale-free topology fit index as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
+     main = paste("Scale independence"));
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     labels=powers,cex=cex1,col="red");
+# this line corresponds to using an R^2 cut-off of h
+abline(h=0.9,col="red")
+# Mean connectivity as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], sft$fitIndices[,5],
+     xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
+     main = paste("Mean connectivity"))
+text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
+```
+
+
+
+
