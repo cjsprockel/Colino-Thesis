@@ -1,0 +1,532 @@
+
+---
+title: "Network construction based on compositional data"
+output: html_notebook
+---
+
+
+###############################################
+# Correlation matrices have been constructed
+###############################################
+
+
+```{r}
+nSamples = 174
+nGenes = 59
+nEdges = nGenes * (nGenes-1) / 2
+
+gamma = log(nEdges, base=(sqrt(nSamples)))
+print(gamma)
+
+
+# A gamma of 2.89 indicates that any soft power scaling of over 2.89 is okay.
+# Power should not be a lot higher than gamma.
+# 
+
+```
+
+
+
+
+
+
+```{r}
+
+##  Looking at Scale independence and mean connectivity of comp correlation matrix
+## We will pick a power of 3 to keep it similar across methods
+
+sim_matrix <- abs(oral_comp_cor)
+
+
+powers = c(c(1:10), seq(from = 12, to=20, by=2))
+sft = pickSoftThreshold.fromSimilarity(sim_matrix, powerVector = powers, verbose = 5)
+
+
+# Plot the results:
+sizeGrWindow(9, 5)
+par(mfrow = c(1,2));
+cex1 = 0.9;
+# Scale-free topology fit index as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
+     main = paste("Scale independence"));
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     labels=powers,cex=cex1,col="red");
+# this line corresponds to using an R^2 cut-off of h
+abline(h=0.9,col="red")
+# Mean connectivity as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], sft$fitIndices[,5],
+     xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
+     main = paste("Mean connectivity"))
+text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
+
+
+
+
+```
+
+
+```{r}
+
+##########################################################
+##########################################################
+##########################################################
+## TOM construction
+## 
+##########################################################
+##########################################################
+##########################################################
+
+oral_similarity_comp <- abs(oral_comp_cor)
+
+## Picking soft power of 3 based on calculation above
+softPower = 3
+oral_adjacency_comp <- adjacency.fromSimilarity(oral_similarity_comp, power = softPower)
+oral_TOM_comp = TOMsimilarity(oral_adjacency_comp, TOMType = "unsigned")
+oral_dissTOM_comp = 1 - oral_TOM_comp
+
+# Call the hierarchical clustering function
+oral_geneTree_comp = hclust(as.dist(oral_dissTOM_comp), method = "average");
+# Plot the resulting clustering tree (dendrogram)
+sizeGrWindow(12,9)
+plot(oral_geneTree_comp, xlab="", sub="", main = "Gene clustering on TOM-based dissimilarity",
+     labels = FALSE, hang = 0.04);
+
+
+# Setting module size is important and has great impact on the modules formed.
+# We pick a module size of 3, keeping in mind the relatively low amount of bacteria (24)
+minModuleSize = 3;
+# Module identification using dynamic tree cut:
+oral_dynamicMods_comp = cutreeDynamic(dendro = oral_geneTree_comp, distM = oral_dissTOM_comp,
+                            deepSplit = 2, pamRespectsDendro = FALSE,
+                            minClusterSize = minModuleSize);
+table(oral_dynamicMods_comp)
+
+
+
+
+
+# Convert numeric lables into colors
+oral_dynamicColors_comp = labels2colors(oral_dynamicMods_comp)
+table(oral_dynamicColors_comp)
+# Plot the dendrogram and colors underneath
+sizeGrWindow(8,6)
+plotDendroAndColors(oral_geneTree_comp, oral_dynamicColors_comp, "Dynamic Tree Cut",
+                    dendroLabels = FALSE, hang = 0.03,
+                    addGuide = TRUE, guideHang = 0.05,
+                    main = "Gene dendrogram and module colors, Compositional")
+
+
+
+
+
+
+
+```
+
+
+```{r}
+
+datExpr = oral_comp
+
+# Calculate eigengenes
+
+
+oral_MEList_comp = moduleEigengenes(datExpr, colors = oral_dynamicColors_comp)
+oral_MEs_comp = oral_MEList_comp$eigengenes
+# Calculate dissimilarity of module eigengenes
+oral_MEDiss_comp = 1-cor(oral_MEs_comp);
+# Cluster module eigengenes
+oral_METree_comp = hclust(as.dist(oral_MEDiss_comp), method = "average");
+# Plot the result
+sizeGrWindow(7, 6)
+plot(oral_METree_comp, main = "Clustering of module eigengenes, based of comp tranformed data",
+     xlab = "", sub = "")
+
+####
+# Plot shows that no merging is necessarry
+###
+oral_moduleColors_comp <- oral_dynamicColors_comp
+
+```
+
+
+
+
+
+
+
+```{r}
+
+library(igraph)
+
+Probes=colnames(oral_dat)
+
+dimnames(oral_TOM_comp) = list(Probes, Probes)
+
+
+oral_net_comp <- graph_from_adjacency_matrix(oral_TOM_comp, mode = "undirected", weighted = TRUE, diag=F)
+
+# Calculate network density:
+sum(E(oral_net_comp)$weight/(gsize(oral_net_comp)))
+
+
+oral_net_comp <- set_vertex_attr(oral_net_comp, "color", value = oral_moduleColors_comp)
+plot(oral_net_comp)
+
+
+# calculate node strength: the sum of all edge weights of a node.
+# stronger nodes are better connected and persumably of more biological importance.
+V(oral_net_comp)$strength <- strength(oral_net_comp, mode="all")
+
+plot(oral_net_comp, 
+     vertex.size= V(oral_net_comp)$strength * 30)
+
+# Delete all edges with a value under 0.01 in the TOM, only the strongest edges remain
+oral_trimmed_comp <- delete.edges(oral_net_comp, which(E(oral_net_comp)$weight <0.05))
+
+
+## Contruct the finished network 
+
+plot(oral_trimmed_comp, 
+     vertex.size= V(oral_net_comp)$strength * 10,
+     vertex.label.color="black",
+     vertex.color = adjustcolor(V(oral_net_comp)$color, alpha.f=0.6), # make nodes slightly opaque to improve readability
+     frame.color=NA, #trying to remove the black frame surrounding the vertices (unsuccesfully)
+     main="Network construction based on compositional count data",
+     sub="edges>0.05 in the TOM are shown. Node size indicates strength of node")
+
+
+plot(oral_trimmed_comp, 
+     vertex.size= V(oral_net_comp)$strength * 20,
+     vertex.label="",
+     vertex.label.color="black",
+     vertex.color = adjustcolor(V(oral_net_comp)$color, alpha.f=0.6), # make nodes slightly opaque to improve readability
+     frame.color=NA, #trying to remove the black frame surrounding the vertices (unsuccesfully)
+     main="Network construction based on  compositional count data",
+     sub="edges>0.05 in the TOM are shown. Node size indicates strength of node")
+
+
+
+
+```
+
+
+
+
+
+
+```{r}
+
+barplot(mean_counts_comp,main="Relative bacteria Abundance, bar color = Comp module color",ylab="Counts (logarithmic scale!)",xlab="",las=2, log="y", col=oral_moduleColors_comp)
+```
+
+
+
+
+########
+####### CONSENSuS ANALYSIS
+
+
+
+```{r}
+# Isolate the module labels in the order they appear in ordered module eigengenes
+oral_dynamicMods_comp = substring(names(oral_MEs_comp), 3)
+oral_dynamicMods_sparcc = substring(names(oral_MEs_sparcc), 3)
+# Convert the numeric module labels to color labels
+oral_comp_Modules = oral_dynamicMods_comp#
+oral_sparcc_Modules = oral_dynamicMods_sparcc#
+# Numbers of comp and sparcc modules
+oral_ncompMods = length(oral_comp_Modules)
+oral_nSparccMods = length(oral_sparcc_Modules)
+# Initialize tables of p-values and of the corresponding counts
+pTable = matrix(0, nrow = oral_ncompMods, ncol = oral_nSparccMods);
+CountTbl = matrix(0, nrow = oral_ncompMods, ncol = oral_nSparccMods);
+# Execute all pairwaise comparisons
+for (fmod in 1:oral_ncompMods)
+  for (cmod in 1:oral_nSparccMods)
+  {
+    oral_comp_Members = (oral_moduleColors_comp == oral_comp_Modules[fmod]);
+    oral_sparcc_Members = (oral_moduleColors_sparcc == oral_sparcc_Modules[cmod]);
+    pTable[fmod, cmod] = -log10(fisher.test(oral_comp_Members, oral_sparcc_Members, alternative = "greater")$p.value);
+    CountTbl[fmod, cmod] = sum(oral_moduleColors_comp == oral_comp_Modules[fmod] & oral_moduleColors_sparcc ==
+        oral_sparcc_Modules[cmod])
+}
+
+```
+
+
+
+
+
+
+
+
+
+```{r}
+# Truncate p values smaller than 10^{-50} to 10^{-50}
+pTable[is.infinite(pTable)] = 1.3*max(pTable[is.finite(pTable)]);
+pTable[pTable>50 ] = 50 ;
+# Marginal counts (really module sizes)
+oral_comp_ModTotals = apply(CountTbl, 1, sum)
+oral_sparcc_ModTotals = apply(CountTbl, 2, sum)
+# Actual plotting
+sizeGrWindow(10,7 );
+#pdf(file = "Plots/FecalModules.pdf", wi = 10, he = 7);
+par(mfrow=c(1,1));
+par(cex = 1.0);
+par(mar=c(8, 10.4, 2.7, 1)+0.3);
+# Use function labeledHeatmap to produce the color-coded table with all the trimmings
+
+labeledHeatmap(Matrix = pTable,
+  xLabels = paste(" ", oral_sparcc_Modules),
+  yLabels = paste(" ", oral_comp_Modules),
+  colorLabels = TRUE,
+  xSymbols = paste("SparCC ", oral_sparcc_Modules, ": ", oral_sparcc_ModTotals, sep=""),
+  ySymbols = paste("comp ", oral_comp_Modules, ": ", oral_comp_ModTotals, sep=""),
+  textMatrix = CountTbl,
+  colors = greenWhiteRed(100)[50:100],
+  cex.text = 1.0, cex.lab = 1.0, setStdMargins = FALSE)
+
+
+```
+
+
+
+
+
+```{r}
+# Isolate the module labels in the order they appear in ordered module eigengenes
+oral_dynamicMods_clr1 = substring(names(oral_MEs_clr1), 3)
+oral_dynamicMods_comp = substring(names(oral_MEs_comp), 3)
+# Convert the numeric module labels to color labels
+oral_clr1_Modules = oral_dynamicMods_clr1#
+oral_comp_Modules = oral_dynamicMods_comp#
+# Numbers of clr1 and comp modules
+oral_nClr1Mods = length(oral_clr1_Modules)
+oral_ncompMods = length(oral_comp_Modules)
+# Initialize tables of p-values and of the corresponding counts
+pTable = matrix(0, nrow = oral_nClr1Mods, ncol = oral_ncompMods);
+CountTbl = matrix(0, nrow = oral_nClr1Mods, ncol = oral_ncompMods);
+# Execute all pairwaise comparisons
+for (fmod in 1:oral_nClr1Mods)
+  for (cmod in 1:oral_ncompMods)
+  {
+    oral_clr1_Members = (oral_moduleColors_clr1 == oral_clr1_Modules[fmod]);
+    oral_comp_Members = (oral_moduleColors_comp == oral_comp_Modules[cmod]);
+    pTable[fmod, cmod] = -log10(fisher.test(oral_clr1_Members, oral_comp_Members, alternative = "greater")$p.value);
+    CountTbl[fmod, cmod] = sum(oral_moduleColors_clr1 == oral_clr1_Modules[fmod] & oral_moduleColors_comp ==
+                                 oral_comp_Modules[cmod])
+  }
+
+```
+
+
+```{r}
+# Truncate p values smaller than 10^{-50} to 10^{-50}
+pTable[is.infinite(pTable)] = 1.3*max(pTable[is.finite(pTable)]);
+pTable[pTable>50 ] = 50 ;
+# Marginal counts (really module sizes)
+oral_clr1_ModTotals = apply(CountTbl, 1, sum)
+oral_comp_ModTotals = apply(CountTbl, 2, sum)
+# Actual plotting
+sizeGrWindow(10,7 );
+#pdf(file = "Plots/FecalModules.pdf", wi = 10, he = 7);
+par(mfrow=c(1,1));
+par(cex = 1.0);
+par(mar=c(8, 10.4, 2.7, 1)+0.3);
+# Use function labeledHeatmap to produce the color-coded table with all the trimmings
+
+labeledHeatmap(Matrix = pTable,
+               xLabels = paste(" ", oral_comp_Modules),
+               yLabels = paste(" ", oral_clr1_Modules),
+               colorLabels = TRUE,
+               xSymbols = paste("comp ", oral_comp_Modules, ": ", oral_comp_ModTotals, sep=""),
+               ySymbols = paste("CLR1 ", oral_clr1_Modules, ": ", oral_clr1_ModTotals, sep=""),
+               textMatrix = CountTbl,
+               colors = greenWhiteRed(100)[50:100],
+               cex.text = 1.0, cex.lab = 1.0, setStdMargins = FALSE)
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+
+#######################################################################
+# Select brown module, visualize network using Igraph
+#######################################################################
+
+module="brown"
+
+probes = colnames(oral_dat)
+
+
+inModule = is.finite(match(oral_moduleColors_comp, module));
+modProbes= probes[inModule]
+modTOM = oral_TOM_comp[inModule,inModule]
+
+dimnames(modTOM) = list(modProbes, modProbes)
+
+net_comp <- graph_from_adjacency_matrix(modTOM, mode = "undirected", weighted = TRUE, diag=F)
+sum(E(net_comp)$weight/(gsize(net_comp)))
+
+# Size of a node is the sum of all its weighted edges
+V(net_comp)$size <- strength(net_comp, mode="all") * 80
+
+
+# REmove edges with low weights
+net_comp <- delete.edges(net_comp, which(E(net_comp)$weight <0.02))
+
+plot(net_comp, 
+     vertex.label.color="black",
+     vertex.color = adjustcolor("brown", alpha.f=0.6)) # make nodes slightly opaque to improve readability)
+
+
+
+# REmove edges with low weights
+net_comp <- delete.edges(net_comp, which(E(net_comp)$weight <0.05))
+
+plot(net_comp, 
+     vertex.label.color="black",
+     vertex.color = adjustcolor("brown", alpha.f=0.6)) # make nodes slightly opaque to improve readability)
+
+
+
+
+
+
+
+
+
+
+
+
+```
+
+```{r}
+
+#######################################################################
+# Select brown module, visualize network using Igraph
+#######################################################################
+
+module="blue"
+
+probes = colnames(oral_dat)
+
+
+inModule = is.finite(match(oral_moduleColors_comp, module));
+modProbes= probes[inModule]
+modTOM = oral_TOM_comp[inModule,inModule]
+
+dimnames(modTOM) = list(modProbes, modProbes)
+
+net_comp <- graph_from_adjacency_matrix(modTOM, mode = "undirected", weighted = TRUE, diag=F)
+sum(E(net_comp)$weight/(gsize(net_comp)))
+
+# Size of a node is the sum of all its weighted edges
+V(net_comp)$size <- strength(net_comp, mode="all") * 40
+
+
+# REmove edges with low weights
+net_comp <- delete.edges(net_comp, which(E(net_comp)$weight <0.02))
+
+plot(net_comp, 
+     vertex.label.color="black",
+     vertex.color = adjustcolor("blue", alpha.f=0.6)) # make nodes slightly opaque to improve readability)
+
+
+
+# REmove edges with low weights
+net_comp <- delete.edges(net_comp, which(E(net_comp)$weight <0.05))
+
+plot(net_comp, 
+     vertex.label.color="black",
+     vertex.color = adjustcolor("blue", alpha.f=0.6)) # make nodes slightly opaque to improve readability)
+
+
+
+
+```
+
+
+
+
+
+```{r}
+
+#######################################################################
+# Select brown module, visualize network using Igraph
+#######################################################################
+
+module="pink"
+
+probes = colnames(oral_dat)
+
+
+inModule = is.finite(match(oral_moduleColors_comp, module));
+modProbes= probes[inModule]
+modTOM = oral_TOM_comp[inModule,inModule]
+
+dimnames(modTOM) = list(modProbes, modProbes)
+
+net_comp <- graph_from_adjacency_matrix(modTOM, mode = "undirected", weighted = TRUE, diag=F)
+sum(E(net_comp)$weight/(gsize(net_comp)))
+
+# Size of a node is the sum of all its weighted edges
+V(net_comp)$size <- strength(net_comp, mode="all") * 80
+
+
+# REmove edges with low weights
+net_comp <- delete.edges(net_comp, which(E(net_comp)$weight <0.02))
+
+plot(net_comp, 
+     vertex.label.color="black",
+     vertex.color = adjustcolor("pink", alpha.f=0.6)) # make nodes slightly opaque to improve readability)
+
+
+
+# REmove edges with low weights
+net_comp <- delete.edges(net_comp, which(E(net_comp)$weight <0.05))
+
+plot(net_comp, 
+     vertex.label.color="black",
+     vertex.color = adjustcolor("pink", alpha.f=0.6)) # make nodes slightly opaque to improve readability)
+
+
+
+```

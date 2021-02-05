@@ -1,0 +1,966 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+
+#Loading an cleaning data
+
+
+library(WGCNA)
+# The following setting is important, do not omit.
+options(stringsAsFactors = FALSE);
+
+workingDir = "C:/Users/cooli/Documents/School/Scriptie";
+setwd(workingDir);
+
+data <- readRDS('L6_8000.RDS')
+sample <- readRDS('sample_8000.RDS')
+
+all.equal(rownames(data), rownames(sample))
+
+# replace troublesome symbols in colnames (these symbols will mess up in RF)
+colnames(data) <- gsub(colnames(data), pattern = "\\[|\\]", replacement = "")
+colnames(data) <- gsub(colnames(data), pattern = " ", replacement = "_")
+
+
+# check for later
+mean(colMeans(data[]))
+
+
+# check if all samples have read counts > 8000
+all(rowSums(data) > 8000) # True
+
+# Filter out bacteria with read counts in less than 10% of samples (0 count in more than 90%)
+zero_pct <- sapply(data, function(e) mean(e==0))
+sum(zero_pct < 0.9) # 59 remain
+data <- data[ ,zero_pct < 0.9]
+
+mean(colMeans(data[]))
+
+oral_dat <- data
+
+```
+
+
+
+We now have clean bacteria count data in the dataframe "oral_dat"
+And patient data in the dataframe "sample"
+
+
+```{r}
+
+
+ # Compositional + log transform (spearman correlation)
+
+
+# function to make data compositional
+comp <- function(x) {
+  x <- apply(x,1,function(x) (x/sum(x)))
+  return(t(x))
+}
+
+# clr1: add + 1 to count data for possible missing reads and for maths
+# clr1: make data compositional
+# clr1: take logarithm
+# clr1: minus rowMeans to show relative abundance.
+clr1 <- function(x){
+  x <- x + 1
+  x <- comp(x)
+  x <- log(x)
+  x <- x - rowMeans(x)
+  return(x)
+}
+oral_comp <- comp(oral_dat)
+oral_comp_cor <- cor(oral_comp, method="spearman")
+
+oral_clr1 <- clr1(oral_dat)
+oral_clr1_spearman <- cor(oral_clr1, method="spearman")
+
+```
+
+
+```{r}
+
+library(ggplot2)
+library(reshape2)
+
+# Get upper triangle of the correlation matrix
+get_upper_tri <- function(cormat){
+  cormat[lower.tri(cormat)]<- NA
+  return(cormat)
+}
+
+reorder_cormat <- function(cormat){
+# Use correlation between variables as distance
+dd <- as.dist((1-cormat)/2)
+hc <- hclust(dd)
+cormat <-cormat[hc$order, hc$order]
+}
+
+
+
+```
+
+
+
+
+
+
+
+```{r}
+  # Build correlation matrix using SparCC
+
+
+library(SpiecEasi)
+
+#SparCC is non-deterministic. We run it 10 times and take the average to get more consisten results
+
+oral_sparcc <- sparcc(oral_dat, iter = 20, inner_iter = 10, th = 0.1)
+  # oral_sparcc contains 2 matrices, the first is the covariance matrix, the second is the correlation matrix.
+  oral_sparcc_cor <- oral_sparcc[[2]]
+  
+for (i in c(1:9)) {
+  oral_sparcc <- sparcc(oral_dat, iter = 20, inner_iter = 10, th = 0.1)
+  # oral_sparcc contains 2 matrices, the first is the covariance matrix, the second is the correlation matrix.
+  oral_sparcc_cor <- oral_sparcc_cor + oral_sparcc[[2]]
+}
+
+
+
+oral_sparcc_cor <- oral_sparcc_cor/10
+
+#save(oral_sparcc_cor, file="Oral_sparcc_avgcor.RData")
+
+######################## fix colnames and rownames of sparcc cor matrix
+########################
+
+
+cormat <- oral_sparcc_cor
+# Reorder the correlation matrix
+cormat <- reorder_cormat(oral_sparcc_cor)
+
+median(cormat)
+IQR(cormat)
+
+
+#colnames(cormat) = colnames(oral_clr1)
+#rownames(cormat) = colnames(oral_clr1)
+upper_tri <- get_upper_tri(cormat)
+# Melt the correlation matrix
+melted_cormat <- melt(upper_tri, na.rm = TRUE)
+# Create a ggheatmap
+ggheatmap <- ggplot(melted_cormat, aes(Var2, Var1, fill = value))+
+  geom_tile(color = "white")+
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1,1), space = "Lab", 
+                       name="SparCC\nCorrelation") +
+  theme(axis.text = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.ticks = element_blank(),
+        panel.background = element_blank())
+# Print the heatmap
+print(ggheatmap)
+
+
+
+```
+
+```{r}
+  # Build correlation matrix using Compositional
+
+
+######################## fix colnames and rownames of sparcc cor matrix
+########################
+
+
+cormat <- oral_comp_cor
+# Reorder the correlation matrix
+cormat <- reorder_cormat(oral_comp_cor)
+
+median(cormat)
+IQR(cormat)
+
+colnames(cormat) = colnames(oral_sparcc_cor)
+rownames(cormat) = colnames(oral_sparcc_cor)
+
+upper_tri <- get_upper_tri(cormat)
+# Melt the correlation matrix
+melted_cormat <- melt(upper_tri, na.rm = TRUE)
+
+
+ggheatmap <- ggplot(melted_cormat, aes(Var2, Var1, fill = value))+
+  geom_tile(color = "white")+
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1,1), space = "Lab", 
+                       name="Spearman\nCorrelation") +
+  theme(axis.text = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.ticks = element_blank(),
+        panel.background = element_blank())
+        
+# Print the heatmap
+print(ggheatmap)
+
+
+
+```
+
+```{r}
+cormat <- oral_clr1_spearman
+# Reorder the correlation matrix
+cormat <- reorder_cormat(oral_clr1_spearman)
+
+median(cormat)
+IQR(cormat)
+
+colnames(cormat) = colnames(oral_sparcc_cor)
+rownames(cormat) = colnames(oral_sparcc_cor)
+
+upper_tri <- get_upper_tri(cormat)
+# Melt the correlation matrix
+melted_cormat <- melt(upper_tri, na.rm = TRUE)
+# Create a ggheatmap
+ggheatmap <- ggplot(melted_cormat, aes(Var2, Var1, fill = value))+
+  geom_tile(color = "white")+
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1,1), space = "Lab", 
+                       name="Spearman\nCorrelation") +
+  theme(axis.text = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.ticks = element_blank(),
+        panel.background = element_blank())
+        
+# Print the heatmap
+print(ggheatmap)
+```
+
+
+###############################################
+# Correlation matrices have been constructed
+###############################################
+
+
+```{r}
+nSamples = 174
+nGenes = 59
+nEdges = nGenes * (nGenes-1) / 2
+
+gamma = log(nEdges, base=(sqrt(nSamples)))
+print(gamma)
+
+
+# A gamma of 2.89 indicates that any soft power scaling of over 2.89 is okay.
+# Power should not be a lot higher than gamma.
+# 
+
+```
+
+
+
+
+
+
+```{r}
+
+##  Looking at Scale independence and mean connectivity of clr1 correlation matrix
+## Results are quite poor, A power of 4 seems most appropriate.
+## picking a power of 3 based on the gamma calculated above also remains as an option.
+
+sim_matrix <- abs(oral_clr1_spearman)
+
+
+powers = c(c(1:10), seq(from = 12, to=20, by=2))
+sft = pickSoftThreshold.fromSimilarity(sim_matrix, powerVector = powers, verbose = 5)
+
+
+# Plot the results:
+sizeGrWindow(9, 5)
+par(mfrow = c(1,2));
+cex1 = 0.9;
+# Scale-free topology fit index as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
+     main = paste("Scale independence"));
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     labels=powers,cex=cex1,col="red");
+# this line corresponds to using an R^2 cut-off of h
+abline(h=0.9,col="red")
+# Mean connectivity as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], sft$fitIndices[,5],
+     xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
+     main = paste("Mean connectivity"))
+text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
+
+
+
+
+```
+
+
+```{r}
+
+##########################################################
+##########################################################
+##########################################################
+## TOM construction
+## 
+##########################################################
+##########################################################
+##########################################################
+
+oral_similarity_clr1 <- abs(oral_clr1_spearman)
+
+## Picking soft power of 3 based on calculation above
+softPower = 3
+oral_adjacency_clr1 <- adjacency.fromSimilarity(oral_similarity_clr1, power = softPower)
+oral_TOM_clr1 = TOMsimilarity(oral_adjacency_clr1, TOMType = "unsigned")
+oral_dissTOM_clr1 = 1 - oral_TOM_clr1
+
+# Call the hierarchical clustering function
+oral_geneTree_clr1 = hclust(as.dist(oral_dissTOM_clr1), method = "average");
+# Plot the resulting clustering tree (dendrogram)
+sizeGrWindow(12,9)
+plot(oral_geneTree_clr1, xlab="", sub="", main = "Gene clustering on TOM-based dissimilarity",
+     labels = FALSE, hang = 0.04);
+
+
+# Setting module size is important and has great impact on the modules formed.
+# We pick a module size of 3, keeping in mind the relatively low amount of bacteria (24)
+minModuleSize = 3;
+# Module identification using dynamic tree cut:
+oral_dynamicMods_clr1 = cutreeDynamic(dendro = oral_geneTree_clr1, distM = oral_dissTOM_clr1,
+                            deepSplit = 2, pamRespectsDendro = FALSE,
+                            minClusterSize = minModuleSize);
+table(oral_dynamicMods_clr1)
+
+
+
+
+
+# Convert numeric lables into colors
+oral_dynamicColors_clr1 = labels2colors(oral_dynamicMods_clr1)
+table(oral_dynamicColors_clr1)
+# Plot the dendrogram and colors underneath
+sizeGrWindow(8,6)
+plotDendroAndColors(oral_geneTree_clr1, oral_dynamicColors_clr1, "Dynamic Tree Cut",
+                    dendroLabels = FALSE, hang = 0.03,
+                    addGuide = TRUE, guideHang = 0.05,
+                    main = "Gene dendrogram and module colors, CLR1")
+
+
+
+
+
+
+
+```
+
+
+```{r}
+
+datExpr = oral_clr1
+
+# Calculate eigengenes
+
+
+oral_MEList_clr1 = moduleEigengenes(datExpr, colors = oral_dynamicColors_clr1)
+oral_MEs_clr1 = oral_MEList_clr1$eigengenes
+# Calculate dissimilarity of module eigengenes
+oral_MEDiss_clr1 = 1-cor(oral_MEs_clr1);
+# Cluster module eigengenes
+oral_METree_clr1 = hclust(as.dist(oral_MEDiss_clr1), method = "average");
+# Plot the result
+sizeGrWindow(7, 6)
+plot(oral_METree_clr1, main = "Clustering of module eigengenes, based of clr1 tranformed data",
+     xlab = "", sub = "")
+
+####
+# Plot shows that no merging is necessarry
+###
+oral_moduleColors_clr1 <- oral_dynamicColors_clr1
+
+```
+
+
+
+
+
+
+
+```{r}
+
+library(igraph)
+
+Probes=colnames(oral_dat)
+
+dimnames(oral_TOM_clr1) = list(Probes, Probes)
+
+
+oral_net_clr1 <- graph_from_adjacency_matrix(oral_TOM_clr1, mode = "undirected", weighted = TRUE, diag=F)
+
+# Calculate network density:
+sum(E(oral_net_clr1)$weight/(gsize(oral_net_clr1)))
+
+
+oral_net_clr1 <- set_vertex_attr(oral_net_clr1, "color", value = oral_moduleColors_clr1)
+plot(oral_net_clr1)
+
+
+# calculate node strength: the sum of all edge weights of a node.
+# stronger nodes are better connected and persumably of more biological importance.
+V(oral_net_clr1)$strength <- strength(oral_net_clr1, mode="all")
+
+plot(oral_net_clr1, 
+     vertex.size= V(oral_net_clr1)$strength * 30)
+
+# Delete all edges with a value under 0.05 in the TOM, only the strongest edges remain
+oral_trimmed_clr1 <- delete.edges(oral_net_clr1, which(E(oral_net_clr1)$weight <0.05))
+
+
+## Contruct the finished network 
+
+plot(oral_trimmed_clr1, 
+     vertex.size= V(oral_net_clr1)$strength * 10,
+     vertex.label.color="black",
+     vertex.color = adjustcolor(V(oral_net_clr1)$color, alpha.f=0.6), # make nodes slightly opaque to improve readability
+     frame.color=NA, #trying to remove the black frame surrounding the vertices (unsuccesfully)
+     main="Network construction based on clr + 1 transformed count data",
+     sub="edges>0.05 in the TOM are shown. Node size indicates strength of node")
+
+
+plot(oral_trimmed_clr1, 
+     vertex.size= V(oral_net_clr1)$strength * 10,
+     vertex.label="",
+     vertex.label.color="black",
+     vertex.color = adjustcolor(V(oral_net_clr1)$color, alpha.f=0.6), # make nodes slightly opaque to improve readability
+     frame.color=NA, #trying to remove the black frame surrounding the vertices (unsuccesfully)
+     main="Network construction based on clr + 1 transformed count data",
+     sub="edges>0.05 in the TOM are shown. Node size indicates strength of node")
+
+
+
+
+```
+
+
+```{r}
+
+## Looking at scale independence and Mean connectivity of Sparcc correlation matrix
+## Results aren't great
+## A power of 3 seems most appropriate
+
+sim_matrix <- abs(oral_sparcc_cor)
+
+
+powers = c(c(1:10), seq(from = 12, to=20, by=2))
+sft = pickSoftThreshold.fromSimilarity(sim_matrix, powerVector = powers, verbose = 5)
+# Plot the results:
+sizeGrWindow(9, 5)
+par(mfrow = c(1,2));
+cex1 = 0.9;
+# Scale-free topology fit index as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
+     main = paste("Scale independence"));
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     labels=powers,cex=cex1,col="red");
+# this line corresponds to using an R^2 cut-off of h
+abline(h=0.9,col="red")
+# Mean connectivity as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], sft$fitIndices[,5],
+     xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
+     main = paste("Mean connectivity"))
+text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
+
+
+
+```
+
+
+```{r}
+
+
+oral_similarity_sparcc <- abs(oral_sparcc_cor)
+
+## Picking soft power of 4 To keep it identical to the CLR1 power
+softPower = 3
+oral_adjacency_sparcc <- adjacency.fromSimilarity(oral_similarity_sparcc, power = softPower)
+oral_TOM_sparcc = TOMsimilarity(oral_adjacency_sparcc, TOMType = "unsigned")
+oral_dissTOM_sparcc = 1 - oral_TOM_sparcc
+
+# Call the hierarchical clustering function
+oral_geneTree_sparcc = hclust(as.dist(oral_dissTOM_sparcc), method = "average");
+# Plot the resulting clustering tree (dendrogram)
+sizeGrWindow(12,9)
+plot(oral_geneTree_sparcc, xlab="", sub="", main = "Gene clustering on TOM-based dissimilarity",
+     labels = FALSE, hang = 0.04);
+
+
+
+
+# Setting module size is important and has great impact on the modules formed.
+# We pick a module size of 3, keeping in mind the relatively low amount of bacteria (24)
+minModuleSize = 3;
+# Module identification using dynamic tree cut:
+oral_dynamicMods_sparcc = cutreeDynamic(dendro = oral_geneTree_sparcc, distM = oral_dissTOM_sparcc,
+                                 deepSplit = 2, pamRespectsDendro = FALSE,
+                                 minClusterSize = minModuleSize);
+table(oral_dynamicMods_sparcc)
+
+
+
+# Convert numeric lables into colors
+oral_dynamicColors_sparcc = labels2colors(oral_dynamicMods_sparcc)
+table(oral_dynamicColors_sparcc)
+# Plot the dendrogram and colors underneath
+sizeGrWindow(8,6)
+plotDendroAndColors(oral_geneTree_sparcc, oral_dynamicColors_sparcc, "Dynamic Tree Cut",
+                    dendroLabels = FALSE, hang = 0.03,
+                    addGuide = TRUE, guideHang = 0.05,
+                    main = "Gene dendrogram and module colors, SparCC")
+
+
+
+
+```
+
+
+```{r}
+
+datExpr = oral_dat
+
+# Calculate eigengenes
+
+# Merging might be problematic due to the SparCC algorithm.
+# Correlation matrix from SparCC, Module Eigengenes calculation does not benefit from SparCC computations.
+oral_MEList_sparcc = moduleEigengenes(datExpr, colors = oral_dynamicColors_sparcc)
+oral_MEs_sparcc = oral_MEList_sparcc$eigengenes
+# Calculate dissimilarity of module eigengenes
+oral_MEDiss_sparcc = 1-cor(oral_MEs_sparcc);
+# Cluster module eigengenes
+oral_METree_sparcc = hclust(as.dist(oral_MEDiss_sparcc), method = "average");
+# Plot the result
+sizeGrWindow(7, 6)
+plot(oral_METree_sparcc, main = "Clustering of module eigengenes, based of clr1 tranformed data",
+     xlab = "", sub = "")
+
+####
+# Plot shows that no merging is necessarry
+###
+
+# naming for comparison with clr1 results later
+oral_moduleColors_sparcc <- oral_dynamicColors_sparcc
+  
+
+
+
+
+
+
+```
+
+
+```{r}
+
+##########################################################
+##########################################################
+##########################################################
+## Basic Network construction
+## 
+##########################################################
+##########################################################
+##########################################################
+
+library(igraph)
+
+Probes=colnames(oral_dat)
+
+dimnames(oral_TOM_sparcc) = list(Probes, Probes)
+
+
+oral_net_sparcc <- graph_from_adjacency_matrix(oral_TOM_sparcc, mode = "undirected", weighted = TRUE, diag=F)
+
+# Calculate network density:
+sum(E(oral_net_sparcc)$weight/(gsize(oral_net_sparcc)))
+
+
+oral_net_sparcc <- set_vertex_attr(oral_net_sparcc, "color", value = oral_moduleColors_sparcc)
+plot(oral_net_sparcc)
+
+
+# calculate node strength: the sum of all edge weights of a node.
+# stronger nodes are better connected and persumably of more biological importance.
+V(oral_net_sparcc)$strength <- strength(oral_net_sparcc, mode="all")
+
+plot(oral_net_sparcc, 
+     vertex.size= V(oral_net_sparcc)$strength * 90)
+
+# Delete all edges with a value under 0.01 in the TOM, only the strongest edges remain
+oral_trimmed_sparcc <- delete.edges(oral_net_sparcc, which(E(oral_net_sparcc)$weight <0.05))
+
+
+## Contruct the finished network 
+
+plot(oral_trimmed_sparcc, 
+     vertex.size= V(oral_net_sparcc)$strength * 30,
+     vertex.label.color="black",
+     vertex.color = adjustcolor(V(oral_net_sparcc)$color, alpha.f=0.6), # make nodes slightly opaque to improve readability
+     frame.color=NA, #trying to remove the black frame surrounding the vertices (unsuccesfully)
+     main="Network construction of Oral bacteria based on SparCC correlation matrix",
+     sub="edges>0.02 in the TOM are shown. Node size indicates strength of node")
+
+plot(oral_trimmed_sparcc, 
+     vertex.label ="",
+     vertex.size= V(oral_net_sparcc)$strength * 30,
+     vertex.label.color="black",
+     vertex.color = adjustcolor(V(oral_net_sparcc)$color, alpha.f=0.6), # make nodes slightly opaque to improve readability
+     frame.color=NA, #trying to remove the black frame surrounding the vertices (unsuccesfully)
+     main="Network construction of Oral bacteria based on SparCC correlation matrix",
+     sub="edges>0.02 in the TOM are shown. Node size indicates strength of node")
+
+
+
+```
+
+
+########
+####### CONSENSuS ANALYSIS
+
+
+
+```{r}
+# Isolate the module labels in the order they appear in ordered module eigengenes
+oral_dynamicMods_clr1 = substring(names(oral_MEs_clr1), 3)
+oral_dynamicMods_sparcc = substring(names(oral_MEs_sparcc), 3)
+# Convert the numeric module labels to color labels
+oral_clr1_Modules = oral_dynamicMods_clr1#
+oral_sparcc_Modules = oral_dynamicMods_sparcc#
+# Numbers of clr1 and sparcc modules
+oral_nClr1Mods = length(oral_clr1_Modules)
+oral_nSparccMods = length(oral_sparcc_Modules)
+# Initialize tables of p-values and of the corresponding counts
+pTable = matrix(0, nrow = oral_nClr1Mods, ncol = oral_nSparccMods);
+CountTbl = matrix(0, nrow = oral_nClr1Mods, ncol = oral_nSparccMods);
+# Execute all pairwaise comparisons
+for (fmod in 1:oral_nClr1Mods)
+  for (cmod in 1:oral_nSparccMods)
+  {
+    oral_clr1_Members = (oral_moduleColors_clr1 == oral_clr1_Modules[fmod]);
+    oral_sparcc_Members = (oral_moduleColors_sparcc == oral_sparcc_Modules[cmod]);
+    pTable[fmod, cmod] = -log10(fisher.test(oral_clr1_Members, oral_sparcc_Members, alternative = "greater")$p.value);
+    CountTbl[fmod, cmod] = sum(oral_moduleColors_clr1 == oral_clr1_Modules[fmod] & oral_moduleColors_sparcc ==
+        oral_sparcc_Modules[cmod])
+}
+
+```
+
+
+```{r}
+# Truncate p values smaller than 10^{-50} to 10^{-50}
+pTable[is.infinite(pTable)] = 1.3*max(pTable[is.finite(pTable)]);
+pTable[pTable>50 ] = 50 ;
+# Marginal counts (really module sizes)
+oral_clr1_ModTotals = apply(CountTbl, 1, sum)
+oral_sparcc_ModTotals = apply(CountTbl, 2, sum)
+# Actual plotting
+sizeGrWindow(10,7 );
+#pdf(file = "Plots/FecalModules.pdf", wi = 10, he = 7);
+par(mfrow=c(1,1));
+par(cex = 1.0);
+par(mar=c(8, 10.4, 2.7, 1)+0.3);
+# Use function labeledHeatmap to produce the color-coded table with all the trimmings
+
+labeledHeatmap(Matrix = pTable,
+  xLabels = paste(" ", oral_sparcc_Modules),
+  yLabels = paste(" ", oral_clr1_Modules),
+  colorLabels = TRUE,
+  xSymbols = paste("SparCC ", oral_sparcc_Modules, ": ", oral_sparcc_ModTotals, sep=""),
+  ySymbols = paste("CLR1 ", oral_clr1_Modules, ": ", oral_clr1_ModTotals, sep=""),
+  textMatrix = CountTbl,
+  colors = greenWhiteRed(100)[50:100],
+  cex.text = 1.0, cex.lab = 1.0, setStdMargins = FALSE)
+
+
+```
+
+
+
+
+
+
+```{r}
+
+# relative abundance barplot of bacteria and module colors
+
+
+mean_counts <- colMeans(oral_dat)
+mean_counts_comp <- colMeans(oral_comp)
+
+#barplot(mean_counts,main="Mean bacteria Counts, bar color = CLR1 module color",ylab="Counts (logarithmic scale!)",xlab="",las=2, log="y", col=oral_moduleColors_clr1)
+
+barplot(mean_counts_comp,main="Relative bacteria Abundance, bar color = CLR1 module color",ylab="Counts (logarithmic scale!)",xlab="",las=2, log="y", col=oral_moduleColors_clr1)
+
+
+```
+
+
+
+```{r}
+
+#barplot(mean_counts,main="Mean bacteria Counts, bar color = SparCC module color",ylab="Counts (logarithmic scale!)",xlab="",las=2, log="y", col=oral_moduleColors_sparcc)
+
+barplot(mean_counts_comp,main="Relative bacteria Abundance, bar color = SparCC module color",ylab="Counts (logarithmic scale!)",xlab="",las=2, log="y", col=oral_moduleColors_sparcc)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+###############################################
+# We will Now look at a couple interesting modules.
+# We are interested if modules found by these techniques
+# Make sense on a biological level
+###############################################
+
+
+
+
+
+
+
+
+CLR1 blue and brown modules and SParCC brown and turquoise modules will be show in detail
+
+
+
+
+```{r}
+#######################################################################
+# Select brown module, visualize network using Igraph
+#######################################################################
+
+module="brown"
+
+probes = colnames(oral_dat)
+
+#sparCC
+inModule = is.finite(match(oral_moduleColors_sparcc, module));
+modProbes= probes[inModule]
+modTOM = oral_TOM_sparcc[inModule,inModule]
+
+dimnames(modTOM) = list(modProbes, modProbes)
+
+brown_net_sparcc <- graph_from_adjacency_matrix(modTOM, mode = "undirected", weighted = TRUE, diag=F)
+sum(E(brown_net_sparcc)$weight/(gsize(brown_net_sparcc)))
+
+# Size of a node is the sum of all its weighted edges
+V(brown_net_sparcc)$size <- strength(brown_net_sparcc, mode="all") * 100
+
+#vertex.size= V(oral_net_sparcc)$strength * 30
+
+# REmove edges with low weights
+brown_net_sparcc <- delete.edges(brown_net_sparcc, which(E(brown_net_sparcc)$weight <0.02))
+
+plot(brown_net_sparcc, 
+     vertex.label.color="black",
+     vertex.color = adjustcolor(module, alpha.f=0.6)) # make nodes slightly opaque to improve readability)
+
+
+
+# REmove edges with low weights
+brown_net_sparcc <- delete.edges(brown_net_sparcc, which(E(brown_net_sparcc)$weight <0.05))
+
+plot(brown_net_sparcc, 
+     vertex.label.color="black",
+     vertex.color = adjustcolor(module, alpha.f=0.6)) # make nodes slightly opaque to improve readability)
+
+
+```
+
+
+
+
+
+
+
+
+
+```{r}
+#######################################################################
+# Select turquoise module, visualize network using Igraph
+#######################################################################
+
+module="turquoise"
+
+probes = colnames(oral_dat)
+
+#SparCC
+inModule = is.finite(match(oral_moduleColors_sparcc, module));
+modProbes= probes[inModule]
+modTOM = oral_TOM_sparcc[inModule,inModule]
+
+dimnames(modTOM) = list(modProbes, modProbes)
+
+net_sparcc <- graph_from_adjacency_matrix(modTOM, mode = "undirected", weighted = TRUE, diag=F)
+sum(E(net_sparcc)$weight/(gsize(net_sparcc)))
+
+# Size of a node is the sum of all its weighted edges
+V(net_sparcc)$size <- strength(net_sparcc, mode="all") * 50
+
+
+
+# REmove edges with low weights
+net_sparcc <- delete.edges(net_sparcc, which(E(net_sparcc)$weight <0.02))
+
+plot(net_sparcc, 
+     vertex.label.color="black",
+     vertex.color = adjustcolor("turquoise", alpha.f=0.6)) # make nodes slightly opaque to improve readability)
+
+
+
+# REmove edges with low weights
+net_sparcc <- delete.edges(net_sparcc, which(E(net_sparcc)$weight <0.05))
+
+plot(net_sparcc, 
+     vertex.label.color="black",
+     vertex.color = adjustcolor("turquoise", alpha.f=0.6)) # make nodes slightly opaque to improve readability)
+
+
+```
+
+
+
+
+```{r}
+
+#######################################################################
+# Select blue module, visualize network using Igraph
+#######################################################################
+
+module="blue"
+
+probes = colnames(oral_dat)
+
+#CLR1
+inModule = is.finite(match(oral_moduleColors_clr1, module));
+modProbes= probes[inModule]
+modTOM = oral_TOM_clr1[inModule,inModule]
+
+dimnames(modTOM) = list(modProbes, modProbes)
+
+blue_net_clr1 <- graph_from_adjacency_matrix(modTOM, mode = "undirected", weighted = TRUE, diag=F)
+sum(E(blue_net_clr1)$weight/(gsize(blue_net_clr1)))
+
+
+# Size of a node is the sum of all its weighted edges
+V(blue_net_clr1)$size <- strength(blue_net_clr1, mode="all") * 20
+
+
+# REmove edges with low weights
+blue_net_clr1 <- delete.edges(blue_net_clr1, which(E(blue_net_clr1)$weight <0.02))
+
+plot(blue_net_clr1, 
+     vertex.label.color="black",
+     vertex.color = adjustcolor("blue", alpha.f=0.5)) # make nodes slightly opaque to improve readability)
+
+
+
+# REmove edges with low weights
+blue_net_clr1 <- delete.edges(blue_net_clr1, which(E(blue_net_clr1)$weight <0.05))
+
+plot(blue_net_clr1, 
+     vertex.label.color="black",
+     vertex.color = adjustcolor("blue", alpha.f=0.5)) # make nodes slightly opaque to improve readability)
+
+
+
+
+
+
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+```{r}
+
+#######################################################################
+# Select brown module, visualize network using Igraph
+#######################################################################
+
+module="brown"
+
+probes = colnames(oral_dat)
+
+#CLR1
+inModule = is.finite(match(oral_moduleColors_clr1, module));
+modProbes= probes[inModule]
+modTOM = oral_TOM_clr1[inModule,inModule]
+
+dimnames(modTOM) = list(modProbes, modProbes)
+
+net_clr1 <- graph_from_adjacency_matrix(modTOM, mode = "undirected", weighted = TRUE, diag=F)
+sum(E(net_clr1)$weight/(gsize(net_clr1)))
+
+# Size of a node is the sum of all its weighted edges
+V(net_clr1)$size <- strength(net_clr1, mode="all") * 20
+
+
+# REmove edges with low weights
+net_clr1 <- delete.edges(net_clr1, which(E(net_clr1)$weight <0.02))
+
+plot(net_clr1, 
+     vertex.label.color="black",
+     vertex.color = adjustcolor("brown", alpha.f=0.6)) # make nodes slightly opaque to improve readability)
+
+
+
+# REmove edges with low weights
+net_clr1 <- delete.edges(net_clr1, which(E(net_clr1)$weight <0.05))
+
+plot(net_clr1,
+     vertex.label.color="black",
+     vertex.color = adjustcolor("brown", alpha.f=0.6)) # make nodes slightly opaque to improve readability)
+
+
+
+
+
+
+
+
+
+
+
+
+```
+
+
+
+
+
+
+
